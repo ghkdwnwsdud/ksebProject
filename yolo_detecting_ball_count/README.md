@@ -5,6 +5,8 @@
 roboflow에서 레이블링한 이미지들을 resize(640X640), augmentation(blur, noise, saturation)을 적용한 2303 장의 이미지들을 yolov5를 이용하여 학습시켰습니다.
 
 최종 수정 : 2024-7-15 (비디오에 적용했을 때 불안정한 면이 있어 보완 필요)
+
+
 v2 : 2024-07-16(best.py 정확도 높이기 위해 training 한번 더 진행) -> best_detecting_ball.py
 
 
