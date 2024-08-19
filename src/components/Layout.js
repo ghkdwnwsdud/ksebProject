@@ -1,248 +1,169 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { AppBar, Toolbar, Typography, Container, Grid, TextField, Button, Paper, Box } from '@mui/material';
-import '../style.css'; // CSS 파일을 import
+import React, { useState, useEffect } from "react";
+import FirstPage from "./FirstPage"; // FirstPage 컴포넌트 import
+import SecondPage from "./SecondPage"; // SecondPage 컴포넌트 import
+import "../styles.css"; // CSS 파일을 import
 
-const VideoStream = ({ youtubeUrl, startTime }) => {
-    const videoRef = useRef(null);
-    const logRef = useRef(null);
+// 서버 URL을 .env 파일로부터 불러옴
+const SERVER_URL = process.env.REACT_APP_SERVER_URL;
+
+const Layout = () => {
+    const [youtubeUrl, setYoutubeUrl] = useState("");
+    const [isVideoLoaded, setIsVideoLoaded] = useState(false);
+    const [logs, setLogs] = useState([]);
+    const [videoFps, setVideoFps] = useState(30);
+    const [currentTime, setCurrentTime] = useState(0);
+    const [currentLog, setCurrentLog] = useState([]);
+
+    const [isSubmitted, setIsSubmitted] = useState(false);
+    const [team1, setTeam1] = useState(""); // 첫 번째 팀 상태 추가
+    const [team2, setTeam2] = useState(""); // 두 번째 팀 상태 추가
+
+    const fetchVideoTitle = async (videoId) => {
+        const API_KEY = process.env.REACT_APP_YOUTUBE_API_KEY;
+        const apiUrl = `https://www.googleapis.com/youtube/v3/videos?id=${videoId}&key=${API_KEY}&part=snippet`;
+
+        try {
+            const response = await fetch(apiUrl);
+            const data = await response.json();
+            const title = data.items[0].snippet.title;
+            extractTeams(title);
+        } catch (error) {
+            console.error("Error fetching video title:", error);
+        }
+    };
+    const extractTeams = (title) => {
+        const match = title.match(/(.+?) vs (.+)/i); // "VS"를 기준으로 분리
+        if (match) {
+            // 각 팀 이름을 정제하여 상태에 저장
+            const team1Name = match[1].trim().toUpperCase();
+            const team2Name = match[2].trim().toUpperCase();
+
+            // 팀 이름을 정제하여 로고와 일치하는 이름만 사용
+            const validTeams = ['KIA', 'LG', '삼성', '두산', 'SSG', 'KT', '롯데', 'NC', '한화', '키움'];
+            const finalTeam1 = validTeams.find(team => team1Name.includes(team));
+            const finalTeam2 = validTeams.find(team => team2Name.includes(team));
+
+            if (finalTeam1 && finalTeam2) {
+                setTeam1(finalTeam1);
+                setTeam2(finalTeam2);
+            }
+        }
+    };
+
+    const submitUrl = async () => {
+        if (!youtubeUrl) {
+            alert("Please enter a valid YouTube URL.");
+            return;
+        }
+
+        try {
+            setIsVideoLoaded(true);
+            setIsSubmitted(true);
+
+            const formData = new FormData();
+            formData.append("url", youtubeUrl);
+
+            const response = await fetch(`${SERVER_URL}/upload`, {
+                method: "POST",
+                body: formData,
+            });
+
+            if (response.ok) {
+                fetchLogs();
+            } else {
+                throw new Error("Failed to upload video");
+            }
+        } catch (error) {
+            alert("Failed to set URL");
+        }
+    };
+
+    const fetchLogs = async () => {
+        try {
+            const response = await fetch(`${SERVER_URL}/results`, {
+                method: "GET",
+                headers: {
+                    "Content-Type": "application/json",
+                    "ngrok-skip-browser-warning": "69420",
+                },
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const data = await response.json();
+            // 데이터 구조 변환
+            const transformedResults = data.results.map(item => ({
+                type: item[0],
+                frame: item[1],
+                time: item[2],
+                results: item[3],
+            }));
+
+            setLogs(transformedResults); // logs 데이터를 업데이트
+            setVideoFps(data.fps || 30); // fps 값을 설정 (데이터에서 가져오거나 기본값 30)
+            console.log("Fetched logs:", transformedResults); // 콘솔에 출력
+            console.log("currentTime:", currentTime);
+        } catch (error) {
+            console.error("Error fetching logs:", error);
+        }
+    };
+
+    useEffect(() => {
+        const logInterval = setInterval(fetchLogs, 5000); // 5초마다 fetchLogs 호출
+        return () => clearInterval(logInterval); // 컴포넌트 언마운트 시 인터벌 클리어
+    }, []);
+
+    useEffect(() => {
+        fetchLogs(); // 컴포넌트가 마운트될 때 최초로 로그를 가져옵니다.
+    }, []);
+
+    const extractVideoId = (url) => {
+        try {
+            const urlObj = new URL(url);
+            if (urlObj.hostname === "youtu.be") {
+                return urlObj.pathname.slice(1);
+            } else if (urlObj.hostname.includes("youtube.com")) {
+                const urlParams = new URLSearchParams(urlObj.search);
+                return urlParams.get("v");
+            }
+        } catch (error) {
+            console.error("Invalid URL:", error);
+            return null;
+        }
+    };
 
     useEffect(() => {
         if (youtubeUrl) {
-            const ws = new WebSocket('ws://localhost:8765');
-            ws.binaryType = 'arraybuffer';
-
-            ws.onopen = () => {
-                ws.send(JSON.stringify({ url: youtubeUrl }));
-            };
-
-            ws.onmessage = (event) => {
-                const currentTime = Date.now();
-                if (typeof event.data === 'string') {
-                    console.log('Received log:', event.data); // 로그 출력
-                    if (logRef.current) {
-                        const elapsed = ((currentTime - startTime) / 1000).toFixed(2);
-                        logRef.current.textContent += `${elapsed}s: LOG: ${event.data}\n`;
-                        // 최신 10개의 로그만 유지
-                        const logLines = logRef.current.textContent.split('\n').slice(-11).join('\n');
-                        logRef.current.textContent = logLines;
-                    }
-                } else {
-                    const blob = new Blob([event.data], { type: 'image/jpeg' });
-                    const url = URL.createObjectURL(blob);
-                    if (videoRef.current) {
-                        videoRef.current.src = url;
-                    }
-                }
-            };
-
-            ws.onerror = (error) => {
-                console.error('WebSocket error:', error);
-            };
-
-            ws.onclose = () => {
-                console.log('WebSocket connection closed');
-            };
-
-            return () => {
-                ws.close();
-            };
+            const videoId = extractVideoId(youtubeUrl);
+            if (videoId) fetchVideoTitle(videoId);
         }
-    }, [youtubeUrl, startTime]);
+    }, [youtubeUrl]);
+
+    if (!isSubmitted) {
+        return (
+            <FirstPage
+                onSubmitUrl={submitUrl}
+                youtubeUrl={youtubeUrl}
+                setYoutubeUrl={setYoutubeUrl}
+            />
+        );
+    }
 
     return (
-        <div>
-            <img ref={videoRef} alt="Video Stream" style={{ width: '100%' }} />
-            <pre ref={logRef} id="log" style={{ whiteSpace: 'pre-wrap', wordWrap: 'break-word' }}></pre>
-        </div>
-    );
-};
-
-const Layout = () => {
-    const [youtubeUrl, setYoutubeUrl] = useState('');
-    const [isVideoLoaded, setIsVideoLoaded] = useState(false);
-    const [logs, setLogs] = useState([]); // 상태 추가
-    const [rankings, setRankings] = useState([]); // 상태 추가
-    const [date, setDate] = useState(''); // 상태 추가
-    const [team1, setTeam1] = useState(''); // 첫 번째 팀 상태 추가
-    const [team2, setTeam2] = useState(''); // 두 번째 팀 상태 추가
-    const [team1Players, setTeam1Players] = useState([]); // 첫 번째 팀 선수 정보 상태 추가
-    const [team2Players, setTeam2Players] = useState([]); // 두 번째 팀 선수 정보 상태 추가
-    const [startTime, setStartTime] = useState(null); // 시작 시간 상태 추가
-
-    const submitUrl = () => {
-        fetch('http://localhost:5000/set_url', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ url: youtubeUrl })
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.status === 'URL set') {
-                alert('URL set successfully');
-                setIsVideoLoaded(true);
-                setTeam1(data.team1); // 첫 번째 팀 설정
-                setTeam2(data.team2); // 두 번째 팀 설정
-                setStartTime(Date.now()); // 시작 시간 설정
-                fetchPlayerStats(data.team1, data.team2); // 선수 정보 가져오기
-            } else {
-                console.error('Error:', data.error); // 에러 메시지 콘솔에 출력
-                alert('Failed to set URL');
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            alert('Failed to set URL');
-        });
-    };
-
-    const fetchPlayerStats = (team1, team2) => {
-        fetch(`http://localhost:5000/api/player-stats?team1=${team1}&team2=${team2}`)
-            .then(response => response.json())
-            .then(data => {
-                setTeam1Players(data[team1]);
-                setTeam2Players(data[team2]);
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                alert('Failed to fetch player stats');
-            });
-    };
-
-    useEffect(() => {
-        fetch('http://localhost:5000/api/kbo-rank')
-            .then(response => response.json())
-            .then(data => {
-                setRankings(data.data);
-                setDate(data.date);
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                alert('Failed to fetch KBO rankings');
-            });
-    }, []);
-
-    return (
-        <Box style={{ width: '100%', height: '100%', position: 'relative', background: 'white' }}>
-            <AppBar position="static" className="app-bar">
-                <Toolbar>
-                    <div className="header">
-                        <div className="header-logo"></div>
-                        <Typography variant="h4" className="header-title">
-                            오늘은 해설왕
-                        </Typography>
-                    </div>
-                    <Button color="inherit" href="https://github.com/your-repo-link">GitHub</Button>
-                </Toolbar>
-            </AppBar>
-            <Container>
-                <Grid container spacing={3} sx={{ marginTop: 2 }}>
-                    <Grid item xs={12} sm={8}>
-                        {isVideoLoaded ? (
-                            <VideoStream youtubeUrl={youtubeUrl} startTime={startTime} />
-                        ) : (
-                            <Paper className="video-container">
-                                <Typography variant="h6" className="text-gray">
-                                    URL을 입력해주세요
-                                </Typography>
-                            </Paper>
-                        )}
-                        <Paper className="log-container">
-                            <Typography variant="h6" style={{ padding: 20 }}>실시간 경기 해설 출력창</Typography>
-                            <Box p={2} id="log" className="text-small text-gray" style={{ maxHeight: '300px', overflowY: 'auto' }}>
-                                {logs.map((log, index) => (
-                                    <Typography key={index} variant="body2" style={{ whiteSpace: 'pre-wrap' }}>
-                                        {log}
-                                    </Typography>
-                                ))}
-                            </Box>
-                        </Paper>
-                    </Grid>
-                    <Grid item xs={12} sm={4}>
-                        <div className="url-input-container">
-                            <div className="link-label">link</div>
-                            <div className="link-input">Enter the link here</div>
-                            <div className="link-divider">|</div>
-                            <TextField 
-                                id="youtubeUrl" 
-                                value={youtubeUrl}
-                                onChange={(e) => setYoutubeUrl(e.target.value)}
-                                variant="outlined" 
-                                fullWidth
-                                InputProps={{
-                                    style: { color: 'white' }, // 텍스트 필드의 텍스트 색상 변경
-                                }}
-                            />
-                            <Button variant="contained" color="primary" onClick={submitUrl} style={{ marginLeft: '10px' }}>
-                                Submit
-                            </Button>
-                        </div>
-                        <Paper className="kbo-ranking-container">
-                            <Typography variant="h6" style={{ padding: 20 }}>KBO 팀 순위표 ({date})</Typography>
-                            <Box p={2} className="ranking-content">
-                                <table>
-                                    <thead>
-                                        <tr>
-                                            <th>순위</th>
-                                            <th>팀명</th>
-                                            <th>경기</th>
-                                            <th>승</th>
-                                            <th>패</th>
-                                            <th>무</th>
-                                            <th>승률</th>
-                                            <th>게임차</th>
-                                            <th>최근10경기</th>
-                                            <th>연속</th>
-                                            <th>홈</th>
-                                            <th>방문</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {rankings.map((ranking, index) => (
-                                            <tr key={index}>
-                                                <td>{ranking.rank}</td>
-                                                <td>{ranking.team}</td>
-                                                <td>{ranking.games}</td>
-                                                <td>{ranking.win}</td>
-                                                <td>{ranking.lose}</td>
-                                                <td>{ranking.draw}</td>
-                                                <td>{ranking.win_rate}</td>
-                                                <td>{ranking.game_behind}</td>
-                                                <td>{ranking.recent_10}</td>
-                                                <td>{ranking.streak}</td>
-                                                <td>{ranking.home}</td>
-                                                <td>{ranking.away}</td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </Box>
-                        </Paper>
-                        <Paper className="summary-container">
-                            <Typography variant="h6" style={{ padding: 20 }}>{team1} 선수 정보</Typography>
-                            <Box p={2}>
-                                {team1Players.map((player, index) => (
-                                    <Typography key={index} variant="body2" style={{ whiteSpace: 'pre-wrap' }}>
-                                        {`${player.선수명} - AVG: ${player.AVG}, G: ${player.G}, PA: ${player.PA}, AB: ${player.AB}`}
-                                    </Typography>
-                                ))}
-                            </Box>
-                        </Paper>
-                        <Paper className="summary-container">
-                            <Typography variant="h6" style={{ padding: 20 }}>{team2} 선수 정보</Typography>
-                            <Box p={2}>
-                                {team2Players.map((player, index) => (
-                                    <Typography key={index} variant="body2" style={{ whiteSpace: 'pre-wrap' }}>
-                                        {`${player.선수명} - AVG: ${player.AVG}, G: ${player.G}, PA: ${player.PA}, AB: ${player.AB}`}
-                                    </Typography>
-                                ))}
-                            </Box>
-                        </Paper>
-                    </Grid>
-                </Grid>
-            </Container>
-        </Box>
+        <SecondPage
+            youtubeUrl={youtubeUrl}
+            logs={logs}
+            videoFps={videoFps}
+            setCurrentTime={setCurrentTime}
+            currentTime={currentTime}
+            currentLog={currentLog}
+            setCurrentLog={setCurrentLog}
+            team1={team1}
+            team2={team2}
+            isVideoLoaded={isVideoLoaded}
+        />
     );
 };
 
