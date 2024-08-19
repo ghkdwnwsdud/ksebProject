@@ -555,9 +555,7 @@ const Layout = () => {
   const [team2, setTeam2] = useState(""); // 두 번째 팀 상태 추가
 
   const fetchVideoTitle = async (videoId) => {
-    const API_KEY = 'AIzaSyDB8Azf7gOs1wti330R4pCBohb35UqwIHo';
-    const apiUrl = `https://www.googleapis.com/youtube/v3/videos?id=${videoId}&key=${API_KEY}&part=snippet`;
-
+    // api 키 삭제
     try {
       const response = await fetch(apiUrl);
       const data = await response.json();
